@@ -1,0 +1,8 @@
+torch
+transformers
+scikit-learn
+datasets
+protobuf
+sentencepiece
+accelerate
+fasttext

@@ -1,0 +1,5 @@
+{
+    "type": "NaiveBayes",
+    "network_args": {},
+    "training_args": {}
+}  

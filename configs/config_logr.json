@@ -1,0 +1,14 @@
+{
+    "type": "LogisticRegression",
+    "embeddings": "fasttext",
+    "freeze_embeddings": false,
+    "network_args": {
+      "embed_dim": 300,
+      "num_classes": 2
+    },
+    "training_args": {
+      "epochs": 40,
+      "learning_rate": 0.0001,
+      "batch_size": 64
+    }
+}
