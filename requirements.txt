@@ -6,3 +6,11 @@ protobuf
 sentencepiece
 accelerate
 fasttext
+notebook
+ipython
+matplotlib
+evaluate
+sentencepiece
+peft
+trl
+bitsandbytes

@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
+from openai import OpenAI
+import numpy as np
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import accuracy_score
-import numpy as np
+
 from utils import word_tokenize
-from tqdm import tqdm
 
 class NaiveBayesTextClassifier:
     def __init__(self, vocab):
@@ -22,7 +22,7 @@ class NaiveBayesTextClassifier:
 
     def prepare_features(self, texts):
         return np.array([self.text_to_bow(text) for text in texts])
-
+    
     def train(self, train_texts, train_labels):
         X_train = self.prepare_features(train_texts)
         y_train = np.array(train_labels)
@@ -35,13 +35,11 @@ class NaiveBayesTextClassifier:
         acc = accuracy_score(y, preds) * 100
         return acc
 
-
 class LogisticRegression(nn.Module):
+
     def __init__(self, vocab_size, embed_dim, num_classes,
-                 lr=1e-3, device='cpu',
                  embedding_weights=None, freeze_embeddings=False):
         super(LogisticRegression, self).__init__()
-        self.device = device
 
         if embedding_weights is not None:
             embedding_tensor = torch.tensor(embedding_weights, dtype=torch.float32)
@@ -53,9 +51,6 @@ class LogisticRegression(nn.Module):
             self.embedding = nn.Embedding(vocab_size, embed_dim)
 
         self.linear = nn.Linear(embed_dim, num_classes)
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        self.to(self.device)
 
     def forward(self, input_ids):
         embedded = self.embedding(input_ids)
@@ -63,65 +58,11 @@ class LogisticRegression(nn.Module):
         logits = self.linear(pooled)
         return logits
 
-    def backward(self, input_ids, labels):
-        self.train()
-        input_ids = input_ids.to(self.device)
-        labels = labels.to(self.device)
-
-        self.optimizer.zero_grad()
-        outputs = self.forward(input_ids)
-        loss = self.criterion(outputs, labels)
-        loss.backward()
-        self.optimizer.step()
-        return loss.item()
-
-    def train_model(self, dataloader, validation_loader=None, epochs=5, save_path="best_model_logr.pt"):
-        best_val_acc = 0.0
-        for epoch in tqdm(range(epochs)):
-            self.train()
-            total_loss = 0
-            for batch in dataloader:
-                input_ids = batch['input_ids']
-                labels = batch['label']
-                loss = self.backward(input_ids, labels)
-                total_loss += loss
-            avg_loss = total_loss / len(dataloader)
-            print(f"Epoch {epoch+1} | Loss: {avg_loss:.4f}")
-
-            if validation_loader:
-                val_acc = self.evaluate(validation_loader)
-                print(f"Validation Accuracy after Epoch {epoch+1}: {val_acc:.2f}%")
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    torch.save(self.state_dict(), save_path)
-                    print(f"New best model saved with val acc: {val_acc:.2f}%")
-    
-        if validation_loader:
-            self.load_state_dict(torch.load(save_path))
-            print(f"Loaded best model with val acc: {best_val_acc:.2f}%")
-
-
-    def evaluate(self, dataloader):
-        self.eval()
-        total, correct = 0, 0
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch['input_ids'].to(self.device)
-                labels = batch['label'].to(self.device)
-                outputs = self.forward(input_ids)
-                _, preds = torch.max(outputs, dim=1)
-                total += labels.size(0)
-                correct += (preds == labels).sum().item()
-        acc = 100 * correct / total
-        return acc
-
-
-class NeuralNetwork(nn.Module):
+class MLP(nn.Module):
     def __init__(self, vocab_size, embed_dim, num_classes,
-                 hidden_dims, lr=1e-3, device='cpu',
+                 hidden_dims, dropout_rate=0.1,
                  embedding_weights=None, freeze_embeddings=False):
-        super(NeuralNetwork, self).__init__()
-        self.device = device
+        super(MLP, self).__init__()
 
         if embedding_weights is not None:
             embedding_tensor = torch.tensor(embedding_weights, dtype=torch.float32)
@@ -137,13 +78,11 @@ class NeuralNetwork(nn.Module):
         for hidden_dim in hidden_dims:
             layers.append(nn.Linear(input_dim, hidden_dim))
             layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout_rate))
             input_dim = hidden_dim
         layers.append(nn.Linear(input_dim, num_classes))
 
         self.network = nn.Sequential(*layers)
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        self.to(self.device)
 
     def forward(self, input_ids):
         embedded = self.embedding(input_ids)
@@ -151,65 +90,11 @@ class NeuralNetwork(nn.Module):
         logits = self.network(pooled)
         return logits
 
-    def backward(self, input_ids, labels):
-        self.train()
-        input_ids = input_ids.to(self.device)
-        labels = labels.to(self.device)
-
-        self.optimizer.zero_grad()
-        outputs = self.forward(input_ids)
-        loss = self.criterion(outputs, labels)
-        loss.backward()
-        self.optimizer.step()
-        return loss.item()
-
-    def train_model(self, dataloader, validation_loader=None, epochs=5,  save_path="best_model_mlp.pt"):
-        best_val_acc = 0.0
-        for epoch in tqdm(range(epochs)):
-            self.train()
-            total_loss = 0
-            for batch in dataloader:
-                input_ids = batch['input_ids']
-                labels = batch['label']
-                loss = self.backward(input_ids, labels)
-                total_loss += loss
-            avg_loss = total_loss / len(dataloader)
-            print(f"Epoch {epoch+1} | Loss: {avg_loss:.4f}")
-
-            if validation_loader:
-                val_acc = self.evaluate(validation_loader)
-                print(f"Validation Accuracy after Epoch {epoch+1}: {val_acc:.2f}%")
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    torch.save(self.state_dict(), save_path)
-                    print(f"New best model saved with val acc: {val_acc:.2f}%")
-    
-        if validation_loader:
-            self.load_state_dict(torch.load(save_path))
-            print(f"Loaded best model with val acc: {best_val_acc:.2f}%")
-
-
-    def evaluate(self, dataloader):
-        self.eval()
-        total, correct = 0, 0
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch['input_ids'].to(self.device)
-                labels = batch['label'].to(self.device)
-                outputs = self.forward(input_ids)
-                _, preds = torch.max(outputs, dim=1)
-                total += labels.size(0)
-                correct += (preds == labels).sum().item()
-        acc = 100 * correct / total
-        return acc
-
-
 class RNN(nn.Module):
     def __init__(self, vocab_size, embed_dim, num_classes,
-                 hidden_dim=128, num_layers=1, lr=1e-3, device='cpu',
+                 hidden_dim=128, num_layers=1,
                  embedding_weights=None, freeze_embeddings=False):
         super(RNN, self).__init__()
-        self.device = device
 
         if embedding_weights is not None:
             embedding_tensor = torch.tensor(embedding_weights, dtype=torch.float32)
@@ -221,76 +106,19 @@ class RNN(nn.Module):
             self.embedding = nn.Embedding(vocab_size, embed_dim)
 
         self.rnn = nn.GRU(embed_dim, hidden_dim, num_layers=num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, num_classes)
-
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        self.to(self.device)
+        self.fc = nn.Linear(hidden_dim * 2, num_classes)
 
     def forward(self, input_ids):
         embedded = self.embedding(input_ids)
         output, hidden = self.rnn(embedded)
-        logits = self.fc(hidden[-1])
+        logits = self.fc(torch.cat(( output[:, -1, :], hidden[-1]), dim=1))
         return logits
-
-    def backward(self, input_ids, labels):
-        self.train()
-        input_ids = input_ids.to(self.device)
-        labels = labels.to(self.device)
-
-        self.optimizer.zero_grad()
-        outputs = self.forward(input_ids)
-        loss = self.criterion(outputs, labels)
-        loss.backward()
-        self.optimizer.step()
-        return loss.item()
-
-    def train_model(self, dataloader, validation_loader=None, epochs=5, save_path="best_model_rnn.pt"):
-        best_val_acc = 0.0
-        for epoch in range(epochs):
-            self.train()
-            total_loss = 0
-            for batch in dataloader:
-                input_ids = batch['input_ids']
-                labels = batch['label'].long()
-                loss = self.backward(input_ids, labels)
-                total_loss += loss
-            avg_loss = total_loss / len(dataloader)
-            print(f"Epoch {epoch+1} | Loss: {avg_loss:.4f}")
-
-            if validation_loader:
-                val_acc = self.evaluate(validation_loader)
-                print(f"Validation Accuracy after Epoch {epoch+1}: {val_acc:.2f}%")
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    torch.save(self.state_dict(), save_path)
-                    print(f"New best model saved with val acc: {val_acc:.2f}%")
-        
-        if validation_loader:
-            self.load_state_dict(torch.load(save_path))
-            print(f"Loaded best model with val acc: {best_val_acc:.2f}%")
-
-    def evaluate(self, dataloader):
-        self.eval()
-        total, correct = 0, 0
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch['input_ids'].to(self.device)
-                labels = batch['label'].to(self.device)
-                outputs = self.forward(input_ids)
-                _, preds = torch.max(outputs, dim=1)
-                total += labels.size(0)
-                correct += (preds == labels).sum().item()
-        acc = 100 * correct / total
-        return acc
-
 
 class LSTM(nn.Module):
     def __init__(self, vocab_size, embed_dim, num_classes,
-                 hidden_dim=128, num_layers=1, lr=1e-3, device='cpu',
+                 hidden_dim=128, num_layers=1,
                  embedding_weights=None, freeze_embeddings=False):
         super(LSTM, self).__init__()
-        self.device = device
 
         if embedding_weights is not None:
             embedding_tensor = torch.tensor(embedding_weights, dtype=torch.float32)
@@ -305,63 +133,31 @@ class LSTM(nn.Module):
                             batch_first=True, bidirectional=False)
         self.fc = nn.Linear(hidden_dim, num_classes)
 
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        self.to(self.device)
-
     def forward(self, input_ids):
         embedded = self.embedding(input_ids)
-        output, (hidden, cell) = self.lstm(embedded)
-        logits = self.fc(hidden[-1])
+        output, (hidden, _) = self.lstm(embedded)
+        logits = self.fc(torch.cat((output[:, -1, :], hidden[-1]), dim=1))
         return logits
 
-    def backward(self, input_ids, labels):
-        self.train()
-        input_ids = input_ids.to(self.device)
-        labels = labels.to(self.device)
-
-        self.optimizer.zero_grad()
-        outputs = self.forward(input_ids)
-        loss = self.criterion(outputs, labels)
-        loss.backward()
-        self.optimizer.step()
-        return loss.item()
-
-    def train_model(self, dataloader, validation_loader=None, epochs=5, save_path="best_model_lstm.pt"):
-        best_val_acc = 0.0
-        for epoch in range(epochs):
-            self.train()
-            total_loss = 0
-            for batch in dataloader:
-                input_ids = batch['input_ids']
-                labels = batch['label'].long()
-                loss = self.backward(input_ids, labels)
-                total_loss += loss
-            avg_loss = total_loss / len(dataloader)
-            print(f"Epoch {epoch+1} | Loss: {avg_loss:.4f}")
-
-            if validation_loader:
-                val_acc = self.evaluate(validation_loader)
-                print(f"Validation Accuracy after Epoch {epoch+1}: {val_acc:.2f}%")
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    torch.save(self.state_dict(), save_path)
-                    print(f"New best model saved with val acc: {val_acc:.2f}%")
-        
-        if validation_loader:
-            self.load_state_dict(torch.load(save_path))
-            print(f"Loaded best model with val acc: {best_val_acc:.2f}%")
-
-    def evaluate(self, dataloader):
-        self.eval()
-        total, correct = 0, 0
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch['input_ids'].to(self.device)
-                labels = batch['label'].to(self.device)
-                outputs = self.forward(input_ids)
-                _, preds = torch.max(outputs, dim=1)
-                total += labels.size(0)
-                correct += (preds == labels).sum().item()
-        acc = 100 * correct / total
-        return acc
+class API:
+    def __init__(self, model_name, system_prompt):
+        self.client = OpenAI(
+            api_key="",
+            base_url="https://api.deepinfra.com/v1/openai",
+        )
+        self.model_name = model_name
+        self.system_prompt = system_prompt
+    def generate(self, text):
+        self.messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": text},
+        ]
+        chat_completion = self.client.chat.completions.create(
+            model=self.model_name,
+            temperature=0.6,
+            top_p=0.9,
+            messages=self.messages,
+        )
+        output = chat_completion.choices[0].message.content
+        self.messages.append({"role": "assistant", "content": output})
+        return output
